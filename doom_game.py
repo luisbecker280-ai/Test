@@ -79,10 +79,9 @@ CREATURE_SPEED_HUNT = 2.15
 CREATURE_SPEED_LURK = 1.05
 CREATURE_UNSEEN_BONUS = 1.5               # schneller, wenn nicht angeschaut
 CREATURE_CONTACT_RANGE = 0.8
-CREATURE_DAMAGE = 24
-CREATURE_SANITY_HIT = 22.0
 CREATURE_REPATH_INTERVAL = 0.4
 CREATURE_SIGHT_RANGE = 13.0
+JUMPSCARE_DURATION = 0.85                 # Dauer des Vollbild-Jumpscares bei Tod
 
 # Spieler-Gesundheit
 PLAYER_MAX_HEALTH = 100
@@ -123,10 +122,22 @@ ENTRANCE = (24, 24)
 INTERIOR_DOORS = [(22, 19), (22, 9), (16, 14), (29, 15)]
 ALL_DOORS = [ENTRANCE] + INTERIOR_DOORS
 
-# Gegenstaende
-KEY_SPAWNS = [(14, 8), (32, 9), (30, 21)]
+# Treppe: verbindet Erdgeschoss <-> Obergeschoss an derselben (x, y)-Zelle
+STAIRS_CELL = (24, 20)
+
+# Obergeschoss: eigener Grundriss im selben Haus-Footprint, nur per Treppe
+# erreichbar (kein direkter Aussenzugang).
+INTERIOR_DOORS_FLOOR1 = [(22, 14)]
+ALL_DOORS_FLOOR1 = INTERIOR_DOORS_FLOOR1
+
+# Gegenstaende (Erdgeschoss)
+KEY_SPAWNS = [(14, 8), (30, 21)]
 BATTERY_SPAWNS = [(5, 34), (42, 6), (18, 20), (25, 11), (8, 12)]
 NOTE_SPAWNS = [(14, 12), (33, 20)]
+
+# Gegenstaende (Obergeschoss) - der 3. Schluessel zwingt zum Etagenwechsel
+KEY_SPAWNS_FLOOR1 = [(30, 9)]
+BATTERY_SPAWNS_FLOOR1 = [(16, 18)]
 
 # Notiz-Texte (Story-Schnipsel)
 NOTE_TEXTS = [
@@ -162,6 +173,11 @@ PROP_BLOCKING = {
     "L": False, "b": False, "x": False,
 }
 LIGHT_PROP = "L"               # wirft Glanzlicht
+
+# Obergeschoss: nur eine Laterne fuer ein bisschen Licht im Flur
+PROP_PLAN_FLOOR1 = {
+    "L": [(20, 10)],
+}
 
 
 def _fill_rect(grid, x0, y0, x1, y1, ch):
@@ -209,6 +225,10 @@ def build_level():
     for (dx, dy) in ALL_DOORS:
         grid[dy][dx] = "D"
 
+    # Treppe ins Obergeschoss
+    sx, sy = STAIRS_CELL
+    grid[sy][sx] = "U"
+
     game_map = ["".join(row) for row in grid]
 
     indoor = {(x, y) for y in range(LEVEL_H) for x in range(LEVEL_W)
@@ -225,9 +245,66 @@ def build_level():
     return game_map, indoor, blocking, prop_cells
 
 
-GAME_MAP, INDOOR_CELLS, BLOCKING_PROP_CELLS, PROP_CELLS = build_level()
+def build_floor1():
+    """Obergeschoss: eigener Grundriss im selben Haus-Footprint. Kein
+    direkter Aussenzugang - nur ueber die Treppe (STAIRS_CELL) erreichbar."""
+    grid = [["#"] * LEVEL_W for _ in range(LEVEL_H)]
+    hx0, hy0, hx1, hy1 = HOUSE
+    _border_rect(grid, hx0, hy0, hx1, hy1, "H")
+    _fill_rect(grid, hx0 + 1, hy0 + 1, hx1 - 1, hy1 - 1, ":")
+
+    for y in range(hy0 + 1, hy1 - 1):
+        grid[y][VWALL_X] = "W"
+
+    for (dx, dy) in ALL_DOORS_FLOOR1:
+        grid[dy][dx] = "D"
+
+    sx, sy = STAIRS_CELL
+    grid[sy][sx] = "S"
+
+    game_map = ["".join(row) for row in grid]
+
+    indoor = {(x, y) for y in range(LEVEL_H) for x in range(LEVEL_W)
+              if game_map[y][x] == ":"}
+
+    blocking = set()
+    prop_cells = {}
+    for sym, coords in PROP_PLAN_FLOOR1.items():
+        for (x, y) in coords:
+            prop_cells[(x, y)] = sym
+            if PROP_BLOCKING[sym]:
+                blocking.add((x, y))
+
+    return game_map, indoor, blocking, prop_cells
+
+
+# Beide Etagen vorab bauen; die jeweils aktive wird ueber set_active_floor()
+# in die Modul-Globals GAME_MAP/INDOOR_CELLS/... gespiegelt. Alle Begehbar-
+# keits-/Pathfinding-/Render-Funktionen lesen ausschliesslich diese Globals,
+# ein zentraler Wechsel hier reicht also fuer das ganze Spiel.
+FLOOR_MAPS = [None, None]
+FLOOR_INDOOR = [None, None]
+FLOOR_BLOCKING = [None, None]
+FLOOR_PROPS = [None, None]
+FLOOR_MAPS[0], FLOOR_INDOOR[0], FLOOR_BLOCKING[0], FLOOR_PROPS[0] = build_level()
+FLOOR_MAPS[1], FLOOR_INDOOR[1], FLOOR_BLOCKING[1], FLOOR_PROPS[1] = build_floor1()
+
+GAME_MAP = FLOOR_MAPS[0]
+INDOOR_CELLS = FLOOR_INDOOR[0]
+BLOCKING_PROP_CELLS = FLOOR_BLOCKING[0]
+PROP_CELLS = FLOOR_PROPS[0]
 MAP_H = len(GAME_MAP)
 MAP_W = len(GAME_MAP[0])
+CURRENT_FLOOR = 0
+
+
+def set_active_floor(idx):
+    global GAME_MAP, INDOOR_CELLS, BLOCKING_PROP_CELLS, PROP_CELLS, CURRENT_FLOOR
+    CURRENT_FLOOR = idx
+    GAME_MAP = FLOOR_MAPS[idx]
+    INDOOR_CELLS = FLOOR_INDOOR[idx]
+    BLOCKING_PROP_CELLS = FLOOR_BLOCKING[idx]
+    PROP_CELLS = FLOOR_PROPS[idx]
 
 
 def map_at(ix, iy):
@@ -244,18 +321,23 @@ class WorldState:
     damit reset_game() ihn frisch aufsetzen kann."""
 
     def __init__(self):
-        # Tueren starten geschlossen; Tor verriegelt bis alle Schluessel da sind
-        self.doors = {cell: False for cell in ALL_DOORS}   # cell -> offen?
+        # Tueren starten geschlossen; Tor verriegelt bis alle Schluessel da sind.
+        # Schluessel ist (Etage, Zelle), da Erd- und Obergeschoss eigene
+        # Tueren-Zustaende haben.
+        self.doors = {}
+        for floor_idx, doors in enumerate((ALL_DOORS, ALL_DOORS_FLOOR1)):
+            for cell in doors:
+                self.doors[(floor_idx, cell)] = False
         self.gate_unlocked = False
 
     def door_open(self, ix, iy):
-        return self.doors.get((ix, iy), False)
+        return self.doors.get((CURRENT_FLOOR, (ix, iy)), False)
 
 
 def is_walkable(ix, iy, world):
     """Begehbar fuer Bewegung/Pathfinding (ohne blockierende Props)."""
     sym = map_at(ix, iy)
-    if sym in (".", ":"):
+    if sym in (".", ":", "U", "S"):
         return True
     if sym == "D":
         return world.door_open(ix, iy)
@@ -277,7 +359,7 @@ def ray_solid(ix, iy, world):
     None (Strahl laeuft weiter). Geschlossene Tueren/verriegeltes Tor sind
     solide und werden gerendert; offene Tueren / entriegeltes Tor sind frei."""
     sym = map_at(ix, iy)
-    if sym in (".", ":"):
+    if sym in (".", ":", "U", "S"):
         return None
     if sym == "D":
         return None if world.door_open(ix, iy) else "D"
@@ -297,7 +379,7 @@ def _heuristic(a, b):
 
 def _path_passable(ix, iy, world):
     sym = map_at(ix, iy)
-    if sym in (".", ":", "D"):
+    if sym in (".", ":", "D", "U", "S"):
         passable = True
     elif sym == "G":
         passable = world.gate_unlocked
@@ -1104,7 +1186,7 @@ class Player:
         self.notes_read = set()
         self.bob_phase = 0.0
         self.moving = False
-        self.hurt_flash = 0.0
+        self.jumpscare_timer = 0.0
         self.low_battery_warned = False
 
     def try_move(self, dx, dy, world):
@@ -1171,9 +1253,6 @@ class Player:
             self.battery = max(0.0, self.battery - FLASH_DRAIN * dt)
             if self.battery == 0:
                 self.flashlight_on = False
-
-        if self.hurt_flash > 0:
-            self.hurt_flash -= dt
 
     def add_battery(self):
         self.battery = min(FLASH_MAX_BATTERY, self.battery + FLASH_BATTERY_PER_PICKUP)
@@ -1272,15 +1351,13 @@ class Creature:
         self.frame = int(self.anim * 6) % 4
 
         if dist <= CREATURE_CONTACT_RANGE and self.contact_cooldown <= 0:
-            player.health -= CREATURE_DAMAGE
-            player.sanity = max(0.0, player.sanity - CREATURE_SANITY_HIT)
-            player.hurt_flash = 0.6
-            self.contact_cooldown = 1.2
+            # Beruehrung = sofortiger Tod + Vollbild-Jumpscare (kein Schaden-
+            # system mehr, kein Verstecken danach).
+            player.health = 0
+            player.jumpscare_timer = JUMPSCARE_DURATION
+            self.contact_cooldown = 999.0
             if audio:
-                audio.play("scare", vol=0.9)
-            # Nach Treffer kurz verschwinden (kein Instakill, klassischer Schreck)
-            self.state = HIDDEN
-            self.hidden_timer = random.uniform(2.5, 4.5)
+                audio.play("scare", vol=1.0)
             return
 
         # Lauern vs. Jagen
@@ -1313,7 +1390,7 @@ class Creature:
             nd = self.path[0]
             if map_at(nd[0], nd[1]) == "D" and not world.door_open(nd[0], nd[1]):
                 if math.hypot(nd[0] + 0.5 - self.x, nd[1] + 0.5 - self.y) < 1.2:
-                    world.doors[nd] = True
+                    world.doors[(CURRENT_FLOOR, nd)] = True
                     if audio:
                         pan = max(-1.0, min(1.0, math.sin(angle_to - player.angle)))
                         audio.play("door", vol=0.7, pan=pan)
@@ -1338,32 +1415,38 @@ class Creature:
 # Props & Items
 # ----------------------------------------------------------------------------
 class WorldObject:
-    __slots__ = ("x", "y", "kind", "collected", "note_index", "bob")
+    __slots__ = ("x", "y", "kind", "collected", "note_index", "bob", "floor")
 
-    def __init__(self, x, y, kind, note_index=-1):
+    def __init__(self, x, y, kind, note_index=-1, floor=0):
         self.x = x
         self.y = y
         self.kind = kind
         self.collected = False
         self.note_index = note_index
         self.bob = random.uniform(0, math.tau)
+        self.floor = floor
 
 
 def spawn_props():
     props = []
-    for (x, y), sym in PROP_CELLS.items():
-        props.append(WorldObject(x + 0.5, y + 0.5, sym))
+    for floor_idx, prop_cells in enumerate(FLOOR_PROPS):
+        for (x, y), sym in prop_cells.items():
+            props.append(WorldObject(x + 0.5, y + 0.5, sym, floor=floor_idx))
     return props
 
 
 def spawn_items():
     items = []
     for (x, y) in KEY_SPAWNS:
-        items.append(WorldObject(x + 0.5, y + 0.5, "key"))
+        items.append(WorldObject(x + 0.5, y + 0.5, "key", floor=0))
+    for (x, y) in KEY_SPAWNS_FLOOR1:
+        items.append(WorldObject(x + 0.5, y + 0.5, "key", floor=1))
     for (x, y) in BATTERY_SPAWNS:
-        items.append(WorldObject(x + 0.5, y + 0.5, "battery"))
+        items.append(WorldObject(x + 0.5, y + 0.5, "battery", floor=0))
+    for (x, y) in BATTERY_SPAWNS_FLOOR1:
+        items.append(WorldObject(x + 0.5, y + 0.5, "battery", floor=1))
     for i, (x, y) in enumerate(NOTE_SPAWNS):
-        items.append(WorldObject(x + 0.5, y + 0.5, "note", note_index=i))
+        items.append(WorldObject(x + 0.5, y + 0.5, "note", note_index=i, floor=0))
     return items
 
 
@@ -1484,6 +1567,8 @@ def _gather_sprites(player, creature, props, items):
             if abs(diff) < HALF_FOV + 0.45:
                 out.append((dist, diff, "creature", creature))
     for obj in props:
+        if obj.floor != CURRENT_FLOOR:
+            continue
         dx, dy = obj.x - player.x, obj.y - player.y
         dist = math.hypot(dx, dy)
         if dist < 0.1 or dist > MAX_DEPTH:
@@ -1492,7 +1577,7 @@ def _gather_sprites(player, creature, props, items):
         if abs(diff) < HALF_FOV + 0.45:
             out.append((dist, diff, obj.kind, obj))
     for obj in items:
-        if obj.collected:
+        if obj.collected or obj.floor != CURRENT_FLOOR:
             continue
         dx, dy = obj.x - player.x, obj.y - player.y
         dist = math.hypot(dx, dy)
@@ -1600,13 +1685,6 @@ def composite_overlays(screen, player, overlays, time_now, frame_count):
         tint.set_alpha(amt)
         screen.blit(tint, (0, 0))
 
-    # 4) Treffer-Blitz
-    if player.hurt_flash > 0:
-        flash = pygame.Surface((SCREEN_W, SCREEN_H))
-        flash.fill((120, 0, 0))
-        flash.set_alpha(int(150 * min(1.0, player.hurt_flash)))
-        screen.blit(flash, (0, 0))
-
 
 def draw_viewmodel(screen, player):
     cx = SCREEN_W // 2 + 120
@@ -1621,6 +1699,25 @@ def draw_viewmodel(screen, player):
         lens = pygame.Surface((40, 40), pygame.SRCALPHA)
         pygame.draw.circle(lens, (255, 230, 150, 200), (20, 20), 12)
         screen.blit(lens, (cx - 20, base_y - 104 + sway), special_flags=pygame.BLEND_RGB_ADD)
+
+
+def draw_jumpscare(screen, bank, time_now):
+    """Vollbild-Jumpscare bei Kreatur-Kontakt: Grossaufnahme + Screen-Shake +
+    rot/weiss blitzendes Overlay - der Spieler ist in diesem Moment bereits
+    tot, das hier ist nur noch der Schreckmoment vor dem Game-Over-Screen."""
+    sprite = bank.get("creature", 4)
+    scale = (SCREEN_H * 1.7) / sprite.get_height()
+    w, h = int(sprite.get_width() * scale), int(sprite.get_height() * scale)
+    big = pygame.transform.scale(sprite, (w, h))
+    shake = 16
+    ox = random.randint(-shake, shake)
+    oy = random.randint(-shake, shake)
+    screen.fill((4, 0, 0))
+    screen.blit(big, (SCREEN_W // 2 - w // 2 + ox, SCREEN_H // 2 - h // 2 + oy))
+    flash = pygame.Surface((SCREEN_W, SCREEN_H))
+    flash.fill((220, 20, 20) if int(time_now * 16) % 2 == 0 else (255, 255, 255))
+    flash.set_alpha(70)
+    screen.blit(flash, (0, 0))
 
 
 # ----------------------------------------------------------------------------
@@ -1658,6 +1755,8 @@ def draw_hud(screen, player, world, font, font_small, prompt):
     screen.blit(font.render(obj, True, col), (16, 14))
     screen.blit(font_small.render(f"Batterien: {player.batteries}", True, (160, 160, 120)),
                 (16, 40))
+    floor_name = "Erdgeschoss" if CURRENT_FLOOR == 0 else "Obergeschoss"
+    screen.blit(font_small.render(f"Etage: {floor_name}", True, (150, 150, 165)), (16, 58))
 
     # Interaktions-Hinweis
     if prompt:
@@ -1669,8 +1768,10 @@ def draw_hud(screen, player, world, font, font_small, prompt):
     pygame.draw.circle(screen, (150, 150, 150), (cx, cy), 2, 1)
 
 
-def draw_unreliable_map(screen, player, world):
-    """Grobe, unzuverlaessige Karte (nur Waende, kein Gegner) - mehr Verlorenheit."""
+def draw_unreliable_map(screen, player, world, time_now):
+    """Grobe, unzuverlaessige Karte (nur Waende, kein Gegner) - mehr
+    Verlorenheit, aber der Ausgang ist immer klar erkennbar: pulsierendes
+    gruenes Tor-Symbol oben rechts (nur auf der Etage, auf der es liegt)."""
     scale = 3
     mw, mh = MAP_W * scale, MAP_H * scale
     ox, oy = SCREEN_W - mw - 12, 12
@@ -1678,12 +1779,28 @@ def draw_unreliable_map(screen, player, world):
     overlay.fill((0, 0, 0, 110))
     for y in range(MAP_H):
         for x in range(MAP_W):
-            if GAME_MAP[y][x] in SOLID_SYMBOLS and GAME_MAP[y][x] != "G":
+            sym = GAME_MAP[y][x]
+            if sym in SOLID_SYMBOLS and sym != "G":
                 pygame.draw.rect(overlay, (90, 90, 96, 130), (x * scale, y * scale, scale, scale))
-    gx, gy = GATE_CELL
-    pygame.draw.rect(overlay, (90, 200, 110, 200), (gx * scale, gy * scale, scale, scale))
-    pygame.draw.circle(overlay, (90, 200, 120, 220),
-                       (int(player.x * scale), int(player.y * scale)), 2)
+            elif sym in ("U", "S"):
+                pygame.draw.rect(overlay, (130, 150, 210, 210), (x * scale, y * scale, scale, scale))
+
+    if CURRENT_FLOOR == 0:
+        gx, gy = GATE_CELL
+        cx, cy = gx * scale + scale // 2, gy * scale + scale // 2
+        pulse = 0.5 + 0.5 * math.sin(time_now * 4.0)
+        r = int(scale * 0.9 + pulse * scale * 1.1)
+        pygame.draw.circle(overlay, (90, 220, 120, 230), (cx, cy), r)
+        pygame.draw.circle(overlay, (210, 255, 215, 255), (cx, cy), max(2, r // 3))
+
+    # Spieler als Richtungs-Pfeil statt blossem Punkt
+    px, py = player.x * scale, player.y * scale
+    ang = player.angle
+    tip = (px + math.cos(ang) * 6, py + math.sin(ang) * 6)
+    left = (px + math.cos(ang + 2.4) * 4, py + math.sin(ang + 2.4) * 4)
+    right = (px + math.cos(ang - 2.4) * 4, py + math.sin(ang - 2.4) * 4)
+    pygame.draw.polygon(overlay, (230, 230, 235, 245), [tip, left, right])
+
     screen.blit(overlay, (ox, oy))
 
 
@@ -1721,10 +1838,14 @@ def door_in_front(player):
     return None
 
 
+def stairs_at(player):
+    return map_at(int(player.x), int(player.y)) in ("U", "S")
+
+
 def handle_pickups(player, world, items, audio):
     note_to_show = -1
     for obj in items:
-        if obj.collected:
+        if obj.collected or obj.floor != CURRENT_FLOOR:
             continue
         if math.hypot(obj.x - player.x, obj.y - player.y) < 0.6:
             obj.collected = True
@@ -1751,10 +1872,12 @@ def handle_pickups(player, world, items, audio):
 # ----------------------------------------------------------------------------
 # Spiel-Setup & States
 # ----------------------------------------------------------------------------
-MENU, PLAYING, PAUSED, GAME_OVER, WIN = "menu", "playing", "paused", "game_over", "win"
+MENU, PLAYING, PAUSED, GAME_OVER, WIN, JUMPSCARE = (
+    "menu", "playing", "paused", "game_over", "win", "jumpscare")
 
 
 def reset_game():
+    set_active_floor(0)
     player = Player(*PLAYER_START)
     creature = Creature(*CREATURE_START)
     world = WorldState()
@@ -1832,6 +1955,8 @@ def main(test_mode=False, test_frames=60):
                         state = PAUSED
                     elif state == PAUSED:
                         state = PLAYING
+                    elif state == JUMPSCARE:
+                        pass
                     else:
                         running = False
                 elif event.key == pygame.K_RETURN:
@@ -1850,7 +1975,12 @@ def main(test_mode=False, test_frames=60):
                     else:
                         dcell = door_in_front(player)
                         if dcell:
-                            world.doors[dcell] = not world.door_open(*dcell)
+                            world.doors[(CURRENT_FLOOR, dcell)] = not world.door_open(*dcell)
+                            if AUDIO:
+                                AUDIO.play("door", vol=0.6)
+                        elif stairs_at(player):
+                            set_active_floor(1 - CURRENT_FLOOR)
+                            creature._teleport_far(player, world)
                             if AUDIO:
                                 AUDIO.play("door", vol=0.6)
 
@@ -1885,7 +2015,11 @@ def main(test_mode=False, test_frames=60):
                     if AUDIO:
                         AUDIO.stop_all()
                         AUDIO.play("gate", vol=1.0)
-                if player.health <= 0 or player.sanity <= 0:
+                if player.jumpscare_timer > 0:
+                    state = JUMPSCARE
+                    if AUDIO:
+                        AUDIO.stop_all()
+                elif player.sanity <= 0:
                     state = GAME_OVER
                     if AUDIO:
                         AUDIO.stop_all()
@@ -1910,9 +2044,17 @@ def main(test_mode=False, test_frames=60):
             composite_overlays(screen, player, overlays, time_now, frame_count)
             draw_viewmodel(screen, player)
             draw_hud(screen, player, world, font, font_small, prompt)
-            draw_unreliable_map(screen, player, world)
+            draw_unreliable_map(screen, player, world, time_now)
             if note_timer > 0:
                 draw_note(screen, font_big, font, note_index)
+
+        elif state == JUMPSCARE:
+            player.jumpscare_timer -= dt
+            draw_jumpscare(screen, bank, time_now)
+            if player.jumpscare_timer <= 0:
+                state = GAME_OVER
+                if AUDIO:
+                    AUDIO.play("scare", vol=1.0)
 
         elif state == MENU:
             draw_centered(screen, font_big, font, "NOCTURNE",

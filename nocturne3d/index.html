@@ -2,7 +2,7 @@
 <html lang="de">
 <head>
 <meta charset="utf-8">
-<title>NOCTURNE 3D</title>
+<title>NOCTURNE — Nacht 1: Die Tankstelle</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
@@ -10,47 +10,60 @@
     user-select: none; cursor: crosshair; }
   #game, #game canvas { position: absolute; inset: 0; }
 
-  /* ---- Atmosphaere-Overlays ---- */
   #vignette { position: absolute; inset: 0; pointer-events: none; z-index: 3;
-    background: radial-gradient(ellipse at center, rgba(0,0,0,0) 42%, rgba(0,0,0,0.55) 78%, rgba(0,0,0,0.9) 100%); }
+    background: radial-gradient(ellipse at center, rgba(0,0,0,0) 40%, rgba(0,0,0,0.55) 78%, rgba(0,0,0,0.92) 100%); }
   #grain { position: absolute; inset: 0; width: 100%; height: 100%;
     pointer-events: none; z-index: 4; opacity: 0.5; image-rendering: pixelated; }
   #redflash { position: absolute; inset: 0; background: #c01010; opacity: 0;
     pointer-events: none; z-index: 8; }
+  #muzzle { position: absolute; inset: 0; background: radial-gradient(circle at 50% 58%, rgba(255,230,160,0.9), rgba(255,160,60,0.25) 25%, transparent 45%);
+    opacity: 0; pointer-events: none; z-index: 7; transition: opacity 0.05s; }
+  #fade { position: absolute; inset: 0; background: #000; opacity: 0;
+    pointer-events: none; z-index: 9; transition: opacity 1.2s; }
 
-  /* ---- HUD ---- */
   #hud { position: absolute; inset: 0; pointer-events: none; z-index: 5; display: none; }
   #crosshair { position: absolute; left: 50%; top: 50%; width: 4px; height: 4px;
-    margin: -2px; border-radius: 50%; background: rgba(220,220,230,0.65); }
-  #stats { position: absolute; left: 18px; top: 16px; text-shadow: 0 0 6px #000; }
-  #keys { font-size: 19px; letter-spacing: 1px; color: #e8e4d0; }
-  #floor { font-size: 13px; color: #9a9aa8; margin-top: 4px; }
-  .barwrap { margin-top: 8px; width: 190px; }
+    margin: -2px; border-radius: 50%; background: rgba(220,220,230,0.6); }
+  #objective { position: absolute; left: 50%; top: 18px; transform: translateX(-50%);
+    font-size: 15px; letter-spacing: 1px; color: #e6dfc8; text-shadow: 0 0 8px #000;
+    background: rgba(6,8,12,0.55); padding: 6px 16px; border: 1px solid #2c2c38; }
+  #stats-left { position: absolute; left: 18px; top: 16px; text-shadow: 0 0 6px #000; }
+  .barwrap { margin-top: 8px; width: 180px; }
   .barlabel { font-size: 10px; letter-spacing: 2px; color: #8d8d99; margin-bottom: 2px; }
   .bar { height: 9px; background: rgba(20,20,28,0.8); border: 1px solid #3a3a46; }
   .bar > div { height: 100%; transition: width 0.2s; }
   #batteryFill { background: linear-gradient(90deg, #a08a2c, #e8d24a); width: 100%; }
-  #sanityFill { background: linear-gradient(90deg, #2c5aa0, #4a9ae8); width: 100%; }
   #staminaFill { background: linear-gradient(90deg, #3f7a3a, #67c95e); width: 100%; }
-  #prompt { position: absolute; left: 50%; bottom: 12%; transform: translateX(-50%);
+  #inv { position: absolute; left: 18px; bottom: 16px; font-size: 14px; color: #d8d2ba;
+    text-shadow: 0 0 6px #000; letter-spacing: 1px; }
+  #prompt { position: absolute; left: 50%; bottom: 13%; transform: translateX(-50%);
     font-size: 17px; color: #ded8c2; text-shadow: 0 0 8px #000; letter-spacing: 1px; }
+  #dialog { position: absolute; left: 50%; bottom: 22%; transform: translateX(-50%);
+    max-width: 70%; text-align: center; font-size: 16px; color: #f0e9d2;
+    background: rgba(4,6,10,0.72); border: 1px solid #33333f; padding: 10px 22px;
+    opacity: 0; transition: opacity 0.4s; text-shadow: 0 0 6px #000; }
 
-  /* ---- Minimap oben rechts ---- */
+  #titleWrap { position: absolute; left: 0; right: 0; top: 30%; text-align: center;
+    pointer-events: none; z-index: 6; opacity: 0; transition: opacity 1.2s; }
+  #title { font-size: 56px; letter-spacing: 14px; color: #b9c4e4; text-shadow: 0 0 26px #37406a; font-weight: bold; }
+  #titleSub { font-size: 16px; letter-spacing: 3px; color: #8a8a98; margin-top: 10px; }
+
   #minimapWrap { position: absolute; right: 16px; top: 16px; text-align: center;
-    background: rgba(4,6,10,0.5); border: 1px solid #2e2e3a; padding: 6px;
+    background: rgba(4,6,10,0.55); border: 1px solid #2e2e3a; padding: 6px;
     box-shadow: 0 0 18px rgba(0,0,0,0.8); }
-  #minimap { display: block; width: 216px; height: 180px; }
-  #minimapFloor { font-size: 11px; letter-spacing: 1px; color: #a8b6d8; margin-top: 4px; }
+  #minimap { display: block; width: 232px; height: 156px; }
+  #minimapLabel { font-size: 10px; letter-spacing: 1px; color: #a8b6d8; margin-top: 4px; max-width: 232px; }
 
-  /* ---- Bildschirme ---- */
   .screen { position: absolute; inset: 0; z-index: 10; display: none;
     flex-direction: column; align-items: center; justify-content: center;
     background: rgba(2,3,6,0.88); text-align: center; }
-  .screen h1 { font-size: 54px; margin: 0 0 18px; letter-spacing: 10px; font-weight: bold; }
+  .screen.transparent { background: rgba(2,3,6,0.25); }
+  .screen h1 { font-size: 52px; margin: 0 0 18px; letter-spacing: 9px; font-weight: bold; }
   .screen p { font-size: 15px; color: #9a9aa6; margin: 6px 0; letter-spacing: 1px; }
   #menu h1 { color: #b9c4e4; text-shadow: 0 0 24px #37406a; }
   #dead h1 { color: #c22626; text-shadow: 0 0 30px #500; }
   #win h1 { color: #58c878; text-shadow: 0 0 24px #164; }
+  #stats { font-size: 14px; color: #b8b29a; margin-top: 14px; }
   .blink { animation: blink 1.4s infinite; }
   @keyframes blink { 50% { opacity: 0.25; } }
 </style>
@@ -59,32 +72,40 @@
   <div id="game"></div>
   <div id="vignette"></div>
   <canvas id="grain" width="128" height="128"></canvas>
+  <div id="muzzle"></div>
   <div id="redflash"></div>
+  <div id="fade"></div>
 
   <div id="hud">
     <div id="crosshair"></div>
-    <div id="stats">
-      <div id="keys">Schluessel: 0 / 3</div>
-      <div id="floor">Etage: Erdgeschoss</div>
-      <div class="barwrap"><div class="barlabel">AKKU</div><div class="bar"><div id="batteryFill"></div></div></div>
-      <div class="barwrap"><div class="barlabel">VERSTAND</div><div class="bar"><div id="sanityFill"></div></div></div>
+    <div id="objective">…</div>
+    <div id="stats-left">
+      <div class="barwrap"><div class="barlabel">TASCHENLAMPE</div><div class="bar"><div id="batteryFill"></div></div></div>
       <div class="barwrap"><div class="barlabel">AUSDAUER</div><div class="bar"><div id="staminaFill"></div></div></div>
     </div>
+    <div id="inv"></div>
     <div id="minimapWrap">
-      <canvas id="minimap" width="216" height="180"></canvas>
-      <div id="minimapFloor">Etage: Erdgeschoss</div>
+      <canvas id="minimap" width="232" height="156"></canvas>
+      <div id="minimapLabel"></div>
     </div>
+    <div id="dialog"></div>
     <div id="prompt"></div>
   </div>
 
+  <div id="titleWrap"><div id="title"></div><div id="titleSub"></div></div>
+
   <div id="menu" class="screen">
     <h1>NOCTURNE</h1>
-    <p>Finde 3 Schluessel, entriegle das Gartentor und entkomme.</p>
-    <p>Einer der Schluessel liegt im Obergeschoss. Etwas jagt dich &ndash; durch beide Etagen.</p>
+    <p style="color:#c8c2a8; font-size:17px;">Nacht 1 — Die Tankstelle</p>
     <p>&nbsp;</p>
-    <p>WASD: Gehen &nbsp;|&nbsp; Maus: Umsehen &nbsp;|&nbsp; SHIFT: Rennen &nbsp;|&nbsp; F: Taschenlampe &nbsp;|&nbsp; E: Tuer / Tor</p>
+    <p>Deine erste Nachtschicht an einer einsamen Tankstelle im Wald.</p>
+    <p>Bedien die Kundschaft. Hoer auf die Polizei. Und wenn das Licht ausgeht:</p>
+    <p style="color:#c96a5a;">Reparier das Auto in der Garage — und FAHR.</p>
     <p>&nbsp;</p>
-    <p class="blink">KLICKEN oder ENTER zum Beginnen</p>
+    <p>WASD: Gehen | Maus: Umsehen | Klick: Schiessen | SHIFT: Rennen</p>
+    <p>E: Benutzen/Aufheben | F: Taschenlampe | Q: Energieriegel | L: Abschliessen</p>
+    <p>&nbsp;</p>
+    <p class="blink">KLICKEN oder ENTER — Schicht beginnen</p>
   </div>
   <div id="pause" class="screen">
     <h1 style="color:#9a9aa8">PAUSE</h1>
@@ -92,15 +113,17 @@
   </div>
   <div id="dead" class="screen">
     <h1>DU BIST TOT</h1>
-    <p>Es hat dich erwischt.</p>
+    <p>Die Nacht hat dich verschlungen.</p>
     <p>&nbsp;</p>
-    <p class="blink">KLICKEN oder ENTER fuer einen neuen Versuch</p>
+    <p class="blink">KLICKEN oder ENTER — neuer Versuch</p>
   </div>
-  <div id="win" class="screen">
-    <h1>ENTKOMMEN</h1>
-    <p>Du hast das Grundstueck hinter dir gelassen. Schau nicht zurueck.</p>
+  <div id="win" class="screen transparent">
+    <h1>DU HAST UEBERLEBT</h1>
+    <p style="color:#c8c2a8;">NACHT 1 — Die Tankstelle</p>
+    <div id="stats"></div>
+    <p id="winsub" style="color:#7a94b8; margin-top:18px;"></p>
     <p>&nbsp;</p>
-    <p class="blink">KLICKEN oder ENTER fuer eine neue Nacht</p>
+    <p class="blink">KLICKEN oder ENTER — von vorn</p>
   </div>
 
   <script src="lib/three.min.js"></script>
@@ -110,6 +133,8 @@
   <script src="js/geometry.js"></script>
   <script src="js/player.js"></script>
   <script src="js/creature.js"></script>
+  <script src="js/npc.js"></script>
+  <script src="js/story.js"></script>
   <script src="js/main.js"></script>
 </body>
 </html>

@@ -1,8 +1,8 @@
 // ============================================================================
-// NOCTURNE 3D — Die Kreatur
-// Hageres 3D-Modell mit gluehenden Augen. Die KI jagt per A* ueber BEIDE
-// Etagen: liegt der Spieler auf der anderen, laeuft sie zur Treppe und
-// steigt sie physisch hoch/runter (gleiches Hoehenmodell wie der Spieler).
+// NOCTURNE Nacht 1 — Die Kreatur
+// Hager, zu lange Gliedmassen, gebeugter Gang, reflektierende Augen.
+// Zustaende: OFF (Akt 1/2), STALK (lauert/naehert sich), HUNT (jagt),
+// SEARCH (sucht zuletzt bekannte Position), STUNNED (Pistolentreffer).
 // ============================================================================
 "use strict";
 
@@ -10,196 +10,267 @@ function buildCreatureModel() {
   var skin = new THREE.MeshLambertMaterial({ map: TEX.skin() });
   var g = new THREE.Group();
 
-  var torso = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.24, 0.95, 8), skin);
-  torso.position.y = 1.55;
+  var pelvis = new THREE.Group();          // alles haengt am Becken -> Buecken moeglich
+  pelvis.position.y = 1.35;
+
+  var torso = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.21, 1.0, 8), skin);
+  torso.position.y = 0.5;
   torso.castShadow = true;
 
-  var head = new THREE.Mesh(new THREE.SphereGeometry(0.17, 10, 8), skin);
-  head.scale.set(0.9, 1.35, 0.95);
-  head.position.y = 2.25;
+  var neck = new THREE.Group();
+  neck.position.y = 1.05;
+  var head = new THREE.Mesh(new THREE.SphereGeometry(0.155, 10, 8), skin);
+  head.scale.set(0.82, 1.45, 0.9);
   head.castShadow = true;
-
-  var eyeMat = new THREE.MeshBasicMaterial({ color: 0xfff6d8 });
-  var eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.030, 6, 5), eyeMat);
+  var eyeMat = new THREE.MeshBasicMaterial({ color: 0xf3ead0 });
+  var eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.028, 6, 5), eyeMat);
   var eyeR = eyeL.clone();
-  eyeL.position.set(-0.062, 2.29, 0.145);
-  eyeR.position.set(0.062, 2.29, 0.145);
-  var mouth = new THREE.Mesh(new THREE.SphereGeometry(0.05, 6, 5),
-    new THREE.MeshBasicMaterial({ color: 0x090607 }));
-  mouth.scale.set(1.0, 1.5, 0.4);
-  mouth.position.set(0, 2.13, 0.13);
+  eyeL.position.set(-0.058, 0.05, 0.13);
+  eyeR.position.set(0.058, 0.05, 0.13);
+  var jaw = new THREE.Mesh(new THREE.SphereGeometry(0.05, 6, 5),
+    new THREE.MeshBasicMaterial({ color: 0x080505 }));
+  jaw.scale.set(1.0, 1.7, 0.5);
+  jaw.position.set(0, -0.11, 0.12);
+  neck.add(head, eyeL, eyeR, jaw);
 
   function limb(w, h) {
     var pivot = new THREE.Group();
-    var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, w), skin);
-    m.position.y = -h / 2;
-    m.castShadow = true;
-    pivot.add(m);
+    var upper = new THREE.Mesh(new THREE.BoxGeometry(w, h * 0.55, w), skin);
+    upper.position.y = -h * 0.27;
+    upper.castShadow = true;
+    var lower = new THREE.Group();
+    lower.position.y = -h * 0.55;
+    var fore = new THREE.Mesh(new THREE.BoxGeometry(w * 0.8, h * 0.55, w * 0.8), skin);
+    fore.position.y = -h * 0.27;
+    fore.castShadow = true;
+    lower.add(fore);
+    pivot.add(upper, lower);
+    pivot.lower = lower;
     return pivot;
   }
-  var armL = limb(0.09, 1.05); armL.position.set(-0.28, 2.0, 0);
-  var armR = limb(0.09, 1.05); armR.position.set(0.28, 2.0, 0);
-  var legL = limb(0.12, 1.1); legL.position.set(-0.12, 1.1, 0);
-  var legR = limb(0.12, 1.1); legR.position.set(0.12, 1.1, 0);
+  // ueberlange Arme (reichen fast bis zum Boden)
+  var armL = limb(0.075, 1.5); armL.position.set(-0.26, 0.95, 0);
+  var armR = limb(0.075, 1.5); armR.position.set(0.26, 0.95, 0);
+  var legL = limb(0.1, 1.35); legL.position.set(-0.11, 0, 0);
+  var legR = limb(0.1, 1.35); legR.position.set(0.11, 0, 0);
 
-  // Reihenfolge = Zeichenreihenfolge beim Jumpscare (Depth-Test aus):
-  // Gliedmassen zuerst, Gesicht zuletzt -> Gesicht liegt immer obenauf
-  g.add(legL, legR, armL, armR, torso, head, eyeL, eyeR, mouth);
-  return { group: g, head: head, eyes: [eyeL, eyeR], eyeMat: eyeMat, arms: [armL, armR], legs: [legL, legR] };
+  pelvis.add(legL, legR, armL, armR, torso, neck);
+  g.add(pelvis);
+  return { group: g, pelvis: pelvis, neck: neck, eyes: [eyeL, eyeR], eyeMat: eyeMat, arms: [armL, armR], legs: [legL, legR], torso: torso };
 }
 
-var LURK = 0, HUNT = 1;
+var C_OFF = 0, C_STALK = 1, C_HUNT = 2, C_SEARCH = 3, C_STUNNED = 4;
 
 function Creature(scene) {
-  var m = buildCreatureModel();
-  this.model = m;
-  scene.add(m.group);
-  this.x = CFG.CREATURE_START.x * CFG.CELL;
-  this.z = CFG.CREATURE_START.z * CFG.CELL;
-  this.floor = CFG.CREATURE_START.floor;
-  this.y = this.floor * CFG.FLOOR1_Y;
-  this.state = LURK;
-  this.aggression = 0;
-  this.path = [];
-  this.repathTimer = 0;
-  this.wanderTimer = 0;
-  this.anim = 0;
-  this.caught = false;
-  this.slowFactor = 1;
+  this.model = buildCreatureModel();
+  scene.add(this.model.group);
+  this.reset();
 }
 
 Creature.prototype.reset = function () {
-  this.x = CFG.CREATURE_START.x * CFG.CELL;
-  this.z = CFG.CREATURE_START.z * CFG.CELL;
-  this.floor = CFG.CREATURE_START.floor;
-  this.y = this.floor * CFG.FLOOR1_Y;
-  this.state = LURK;
-  this.aggression = 0;
+  this.x = CFG.CREATURE_SPAWN.x * CFG.CELL;
+  this.z = CFG.CREATURE_SPAWN.z * CFG.CELL;
+  this.state = C_OFF;
+  this.model.group.visible = false;
   this.path = [];
+  this.repathTimer = 0;
+  this.wanderTimer = 0;
+  this.stunTimer = 0;
+  this.searchTimer = 0;
+  this.bangTimer = 0;
+  this.lastKnown = null;
+  this.aggression = 0;       // steigt mit jedem gefundenen Autoteil
+  this.anim = 0;
   this.caught = false;
-  this.model.group.visible = true;
+  this.slow = 1;
+};
+
+Creature.prototype.activate = function () {
+  if (this.state === C_OFF) {
+    this.state = C_STALK;
+    this.model.group.visible = true;
+  }
+};
+
+Creature.prototype.stun = function (audio) {
+  if (this.state === C_OFF || this.caught) return false;
+  this.state = C_STUNNED;
+  this.stunTimer = CFG.STUN_DURATION;
+  this.path = [];
+  if (audio) audio.stunHiss();
+  return true;
 };
 
 Creature.prototype.cell = function () {
   return [Math.floor(this.x / CFG.CELL), Math.floor(this.z / CFG.CELL)];
 };
 
-// Zielzelle bestimmen: Spieler direkt – oder erst die Treppe, wenn er auf
-// der anderen Etage ist.
-Creature.prototype._goal = function (player) {
-  if (player.floor === this.floor)
-    return [player.cellX(), player.cellZ()];
-  // andere Etage: zum jeweils fernen Ende des Treppenlaufs
-  return this.floor === 0 ? CFG.STAIR_RUN[CFG.STAIR_RUN.length - 1] : CFG.STAIR_RUN[0];
-};
-
 Creature.prototype._wanderGoal = function (player, world) {
   for (var i = 0; i < 30; i++) {
     var cx = Math.floor(Math.random() * CFG.GRID_W);
     var cz = Math.floor(Math.random() * CFG.GRID_H);
-    if (isPathBlocked(this.floor, cx, cz, world)) continue;
+    if (isPathBlocked(cx, cz, world)) continue;
     var d = Math.hypot(cx - player.cellX(), cz - player.cellZ());
-    if (d > 4 && d < 15) return [cx, cz];
+    if (d > 6 && d < 22) return [cx, cz];
   }
   return this.cell();
 };
 
 Creature.prototype.update = function (dt, player, world, audio, lookedAt) {
-  if (this.caught) return;
+  if (this.state === C_OFF || this.caught) return;
   this.anim += dt;
-  this.aggression = Math.min(1, this.aggression + dt * 0.010);
 
   var dx = player.x - this.x, dz = player.z - this.z;
-  var hdist = Math.hypot(dx, dz);
-  var sameFloor = player.floor === this.floor;
+  var dist = Math.hypot(dx, dz);
 
-  // --- Fang: Beruehrung = sofortiger Tod (Jumpscare loest main.js aus) ----
-  if (sameFloor && hdist < CFG.CREATURE_CONTACT && Math.abs(player.y - this.y) < 1.8) {
+  // --- Fang (nicht wenn versteckt und unentdeckt) ---------------------------
+  if (dist < CFG.CREATURE_CONTACT && !player.hidden) {
     this.caught = true;
     return;
   }
 
-  // --- Zustandswechsel -----------------------------------------------------
-  var los = sameFloor && lineOfSight(this.floor, this.x, this.z, player.x, player.z, world);
-  var sees = los && hdist < CFG.CREATURE_SIGHT;
-  if (this.state === LURK && (sees && (player.lightLevel() > 0.3 || hdist < 5.5) || this.aggression > 0.85 || player.sanity < 25)) {
-    this.state = HUNT;
-  } else if (this.state === HUNT && !sees && !sameFloor && Math.random() < dt * 0.02) {
-    this.state = LURK;
+  // --- Betaeubung ------------------------------------------------------------
+  if (this.state === C_STUNNED) {
+    this.stunTimer -= dt;
+    this._pose(dt, 0, true);
+    this.model.group.position.set(this.x, 0, this.z);
+    if (this.stunTimer <= 0) {
+      this.state = C_HUNT;                 // wuetend wieder aufstehen
+      this.lastKnown = [player.cellX(), player.cellZ()];
+    }
+    return;
   }
 
-  // Angestarrt im Licht -> friert fast ein (aber verschwindet nicht)
-  this.slowFactor += ((lookedAt ? 0.16 : 1.0) - this.slowFactor) * Math.min(1, dt * 5);
+  var los = lineOfSight(this.x, this.z, player.x, player.z, world);
+  var seesPlayer = !player.hidden && los && dist < CFG.CREATURE_SIGHT * (player.flashOn ? 1.25 : 0.8);
+  var hearsPlayer = !player.hidden && player.noise > 0.6 && dist < CFG.CREATURE_HEAR_RUN;
 
-  // --- Pfad ------------------------------------------------------------------
+  // --- Zustandslogik -----------------------------------------------------------
+  if (seesPlayer || hearsPlayer) {
+    this.state = C_HUNT;
+    this.lastKnown = [player.cellX(), player.cellZ()];
+  } else if (this.state === C_HUNT) {
+    // Spieler verloren -> letzte Position absuchen
+    this.state = C_SEARCH;
+    this.searchTimer = 7 + this.aggression * 4;
+  } else if (this.state === C_SEARCH) {
+    this.searchTimer -= dt;
+    if (this.searchTimer <= 0) this.state = C_STALK;
+  }
+
+  // Angeschaut im Licht -> zoegert
+  this.slow += (((lookedAt && this.state !== C_HUNT) ? 0.25 : 1.0) - this.slow) * Math.min(1, dt * 4);
+
+  // --- Ziel & Pfad -----------------------------------------------------------------
   this.repathTimer -= dt;
   var mycell = this.cell();
-  if (this.state === HUNT) {
-    if (this.repathTimer <= 0 || this.path.length === 0) {
-      this.repathTimer = 0.7;
-      var p = findPath(this.floor, mycell, this._goal(player), world);
-      this.path = p ? p.slice(1) : [];
-    }
-  } else {
+  var goal = null;
+  if (this.state === C_HUNT) goal = [player.cellX(), player.cellZ()];
+  else if (this.state === C_SEARCH && this.lastKnown) goal = this.lastKnown;
+  else {
     this.wanderTimer -= dt;
     if (this.wanderTimer <= 0 || this.path.length === 0) {
-      this.wanderTimer = 4 + Math.random() * 5;
-      var w = findPath(this.floor, mycell, this._wanderGoal(player, world), world);
+      this.wanderTimer = 5 + Math.random() * 6;
+      var w = findPath(mycell, this._wanderGoal(player, world), world);
       this.path = w ? w.slice(1) : [];
     }
   }
+  if (goal && (this.repathTimer <= 0 || this.path.length === 0)) {
+    this.repathTimer = 0.6;
+    var p = findPath(mycell, goal, world);
+    this.path = p ? p.slice(1) : [];
+  }
 
-  // --- Bewegung entlang des Pfads -------------------------------------------
-  var speed = (this.state === HUNT ? CFG.CREATURE_SPEED_HUNT : CFG.CREATURE_SPEED_LURK)
-    * this.slowFactor * (0.75 + this.aggression * 0.35);
-  if (this.state === HUNT && sameFloor && hdist < 3.5 && los) {
-    // Endspurt: direkt auf den Spieler zu
-    this.x += (dx / hdist) * speed * dt;
-    this.z += (dz / hdist) * speed * dt;
+  // --- Bewegung ---------------------------------------------------------------------
+  var speed = (this.state === C_HUNT ? CFG.CREATURE_SPEED_HUNT : CFG.CREATURE_SPEED_PATROL)
+    * this.slow * (0.8 + this.aggression * 0.45);
+  var moving = false;
+  if (this.state === C_HUNT && dist < 4 && los && !player.hidden) {
+    this.x += (dx / dist) * speed * dt;
+    this.z += (dz / dist) * speed * dt;
+    moving = true;
   } else if (this.path.length) {
     var t = this.path[0];
     var tx = (t[0] + 0.5) * CFG.CELL, tz = (t[1] + 0.5) * CFG.CELL;
     var ddx = tx - this.x, ddz = tz - this.z;
     var dd = Math.hypot(ddx, ddz);
-    // geschlossene Tuer auf dem Weg? -> aufreissen
-    var ts = symAt(this.floor, t[0], t[1]);
-    if (ts === "D" && !world.doorOpen(this.floor, t[0], t[1]) && dd < CFG.CELL * 1.3) {
-      world.openDoor(this.floor, t[0], t[1], true);
+    var ts = symAt(t[0], t[1]);
+    if (ts === "D" && dd < CFG.CELL * 1.4) {
+      var door = world.getDoor(t[0], t[1]);
+      if (door && door.open < 0.6) {
+        if (door.locked) {
+          // an der verschlossenen Tuer haemmern, dann aufbrechen
+          this.bangTimer -= dt;
+          if (this.bangTimer <= 0) {
+            this.bangTimer = 1.1;
+            if (audio) audio.doorBang();
+            door.bangs = (door.bangs || 0) + 1;
+            if (door.bangs >= 4) { door.locked = false; door.target = 1; if (audio) audio.doorCreak(); }
+          }
+          this._pose(dt, 0, false);
+          this.model.group.position.set(this.x, 0, this.z);
+          this.model.group.rotation.y = Math.atan2(tx - this.x, tz - this.z);
+          return;
+        }
+        world.openDoor(t[0], t[1], true);
+      }
     }
-    if (dd < 0.15) this.path.shift();
+    if (dd < 0.18) this.path.shift();
     else {
       this.x += (ddx / dd) * Math.min(speed * dt, dd);
       this.z += (ddz / dd) * Math.min(speed * dt, dd);
+      moving = true;
     }
   }
 
-  // --- Hoehe & Etage (gleiches Modell wie beim Spieler) ----------------------
-  var gy = groundHeight(this.x, this.z, this.floor);
-  this.y += (gy - this.y) * Math.min(1, dt * 10);
-  if (Math.abs(gy - this.y) < 0.03) this.y = gy;
-  this.floor = floorFromY(this.y);
-
-  // --- Modell / Animation -----------------------------------------------------
+  // --- Modell -----------------------------------------------------------------------
   var g = this.model.group;
-  g.position.set(this.x, this.y, this.z);
-  if (hdist > 0.05 && sameFloor) g.rotation.y = Math.atan2(dx, dz);
+  g.position.set(this.x, 0, this.z);
+  if (this.state === C_HUNT && dist > 0.05) g.rotation.y = Math.atan2(dx, dz);
   else if (this.path.length) {
     var n = this.path[0];
     g.rotation.y = Math.atan2((n[0] + 0.5) * CFG.CELL - this.x, (n[1] + 0.5) * CFG.CELL - this.z);
   }
-  var moving = this.path.length > 0 || (this.state === HUNT && sameFloor);
-  var swing = moving ? Math.sin(this.anim * (this.state === HUNT ? 10 : 5)) * 0.6 : 0;
-  this.model.legs[0].rotation.x = swing;
-  this.model.legs[1].rotation.x = -swing;
-  if (this.state === HUNT) {
-    // Arme nach vorn gestreckt
-    this.model.arms[0].rotation.x += (-1.9 - this.model.arms[0].rotation.x) * Math.min(1, dt * 4);
-    this.model.arms[1].rotation.x += (-1.9 - this.model.arms[1].rotation.x) * Math.min(1, dt * 4);
+  this._pose(dt, moving ? (this.state === C_HUNT ? 11 : 4.5) : 0, false);
+
+  // Kopf fixiert den Spieler, wenn sichtbar (unheimlich)
+  if (seesPlayer || this.state === C_HUNT) {
+    var headAng = Math.atan2(dx, dz) - g.rotation.y;
+    this.model.neck.rotation.y += (headAng - this.model.neck.rotation.y) * Math.min(1, dt * 6);
   } else {
-    this.model.arms[0].rotation.x += (swing * 0.5 - this.model.arms[0].rotation.x) * Math.min(1, dt * 4);
-    this.model.arms[1].rotation.x += (-swing * 0.5 - this.model.arms[1].rotation.x) * Math.min(1, dt * 4);
+    this.model.neck.rotation.y *= Math.max(0, 1 - dt * 3);
   }
-  // unheimliches Kopf-Zucken
-  this.model.head.rotation.z = Math.sin(this.anim * 1.7) * 0.12 + (this.state === HUNT ? Math.sin(this.anim * 23) * 0.05 : 0);
-  this.model.eyeMat.color.setHex(this.state === HUNT ? 0xffffff : 0xd8cdb4);
+  this.model.eyeMat.color.setHex(this.state === C_HUNT ? 0xffffff : 0xcfc4a4);
+};
+
+Creature.prototype._pose = function (dt, freq, stunned) {
+  var m = this.model;
+  if (stunned) {
+    // zusammengesackt
+    m.pelvis.position.y += (0.7 - m.pelvis.position.y) * Math.min(1, dt * 5);
+    m.pelvis.rotation.x += (0.9 - m.pelvis.rotation.x) * Math.min(1, dt * 5);
+    return;
+  }
+  m.pelvis.position.y += (1.35 - m.pelvis.position.y) * Math.min(1, dt * 4);
+  // gebeugter Gang + Zucken bei der Jagd
+  var hunch = this.state === C_HUNT ? 0.5 : 0.32;
+  var twitch = this.state === C_HUNT ? Math.sin(this.anim * 31) * 0.05 : 0;
+  m.pelvis.rotation.x += (hunch + twitch - m.pelvis.rotation.x) * Math.min(1, dt * 5);
+  var swing = freq > 0 ? Math.sin(this.anim * freq) * 0.65 : 0;
+  m.legs[0].rotation.x = swing;
+  m.legs[1].rotation.x = -swing;
+  m.legs[0].lower.rotation.x = Math.max(0, -swing) * 0.8;
+  m.legs[1].lower.rotation.x = Math.max(0, swing) * 0.8;
+  if (this.state === C_HUNT) {
+    m.arms[0].rotation.x += (-1.7 - m.arms[0].rotation.x) * Math.min(1, dt * 4);
+    m.arms[1].rotation.x += (-1.7 - m.arms[1].rotation.x) * Math.min(1, dt * 4);
+    m.arms[0].lower.rotation.x = -0.4;
+    m.arms[1].lower.rotation.x = -0.4;
+  } else {
+    m.arms[0].rotation.x += (swing * 0.4 - m.arms[0].rotation.x) * Math.min(1, dt * 4);
+    m.arms[1].rotation.x += (-swing * 0.4 - m.arms[1].rotation.x) * Math.min(1, dt * 4);
+    m.arms[0].lower.rotation.x = -0.15;
+    m.arms[1].lower.rotation.x = -0.15;
+  }
+  m.neck.rotation.z = Math.sin(this.anim * 1.9) * 0.1 + twitch * 2;
 };

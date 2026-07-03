@@ -138,6 +138,8 @@ selbst gesteuert durch einen Tunnel in die Freiheit.
 | Kreatur-KI | Patrouille/Jagd/Suchen, hört Geräusche, tötet bei Berührung sofort |
 | Jumpscare | Vollbild + **lauter Schrei** + Shake — wichtigster Schockmoment |
 | Verstecken ★ | Tresen, Spind, Jagdhütte |
+| **Pistole** | Findbar (Revolver des Besitzers, Schublade unterm Tresen). **Betäubt** die Kreatur bei Treffer für kurze Zeit (~6 s) — tötet NICHT. Begrenzte Munition (6 Schuss, ★ Nachschub in der Jagdhütte). Der Schuss ist laut und verrät die Position. |
+| **Energieriegel** | In den Shop-Regalen verteilt (3–4 Stück). Aufsammeln → Inventar, mit [Q] essen → **Ausdauer sofort voll** + kurzer Sprint-Bonus. |
 | Taschenlampe/Akku, Ausdauer, Minimap | bleiben aus dem bestehenden Spiel erhalten |
 | Fahr-Finale | selbst steuerbares Auto, Tunnel, Schwarzblende, Outro |
 
@@ -159,6 +161,17 @@ selbst gesteuert durch einen Tunnel in die Freiheit.
   Vorbeifahr-Sounds, Zapfsäulen-Pumpe, Türglocke, Schritte auf
   Asphalt/Waldboden, Herzschlag — und der **Jumpscare-Schrei als
   lautester Sound des Spiels**.
+- **Musik-Dramaturgie (zweischichtig):**
+  - **Grundzustand = Stille mit Leben:** KEINE Dauermusik. Nur ein leises
+    Rauschen — Wind, raschelnde Blätter, ab und zu ein Ast, ein
+    entfernter Vogel/Käuzchen. Die Stille selbst baut die Spannung auf.
+  - **Bedrohungsmusik:** Sobald die Kreatur jagt oder nah ist, blendet
+    eine **bedrohliche, nervös machende Verfolgungsmusik** ein
+    (pulsierender Bass, dissonante Flächen, treibende Schläge) und
+    blendet wieder aus, wenn man entkommt — so weiß man ohne Hinsehen,
+    dass man in Gefahr ist.
+  - Umsetzung prozedural per WebAudio (kein Download zur Laufzeit, Spiel
+    bleibt offline lauffähig — „aus dem Internet" ist nicht nötig).
 
 ## 6. Technik & Qualität
 

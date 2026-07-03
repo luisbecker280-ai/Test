@@ -1,240 +1,295 @@
 // ============================================================================
-// NOCTURNE 3D — Konfiguration, Grundrisse & reine Spiellogik-Helfer
-// (bewusst ohne THREE-Abhaengigkeit, damit Node-Tests die Karten pruefen koennen)
+// NOCTURNE — Nacht 1: „Die Tankstelle"
+// Konfiguration, Karte & reine Spiellogik-Helfer (ohne THREE-Abhaengigkeit,
+// damit Node-Tests die Karte pruefen koennen).
+//
+// Kartensymbole:
+//   M Fels/Berg      R Strasse        U Strasse im Tunnel   r Vorplatz-Asphalt
+//   . Gras           p Trampelpfad    T Baum (solide)
+//   H Gebaeudewand   w Fensterwand    W Innenwand           B Huettenwand (Holz)
+//   D Tuer           d Garagen-Rolltor
+//   : Shop-Boden     g Garagen-Boden  h Huetten-Boden
 // ============================================================================
 "use strict";
 
-var CFG = {
-  CELL: 1.5,            // Kantenlaenge einer Rasterzelle in Weltmetern
-  WALL_H: 3.0,          // Wandhoehe pro Etage
-  FLOOR1_Y: 3.0,        // Bodenhoehe Obergeschoss
-  FENCE_H: 1.5,         // Zaunhoehe
-  EYE: 1.62,            // Augenhoehe ueber Boden
-  GRID_W: 36,
-  GRID_H: 30,
+// ?fast in der URL: reduzierte Details fuer Headless-Tests (Software-WebGL)
+var FAST = (typeof location !== "undefined") && /fast/.test(location.search);
 
-  WALK_SPEED: 3.1,
-  RUN_SPEED: 5.2,
+var CFG = {
+  CELL: 2.0,
+  WALL_H: 3.2,          // Wandhoehe der Gebaeude
+  EYE: 1.62,
+  GRID_W: 96,
+  GRID_H: 64,
+
+  WALK_SPEED: 3.2,
+  RUN_SPEED: 5.6,
   STAMINA_MAX: 100,
-  PLAYER_R: 0.34,       // Kollisionsradius Spieler
+  PLAYER_R: 0.35,
 
   BATTERY_MAX: 100,
-  BATTERY_DRAIN: 1.35,  // pro Sekunde bei eingeschalteter Lampe
-  BATTERY_PICKUP: 45,
+  BATTERY_DRAIN: 1.1,
 
-  SANITY_MAX: 100,
-  SANITY_DRAIN_DARK: 2.1,
-  SANITY_DRAIN_CREATURE: 5.5,
-  SANITY_REGEN: 3.0,
+  ENERGY_BARS_START: 0,
+  PISTOL_AMMO: 6,
+  STUN_DURATION: 6.5,     // Sekunden Betaeubung nach Pistolentreffer
+  PISTOL_RANGE: 22,
 
-  KEYS_NEEDED: 3,
+  CREATURE_SPEED_PATROL: 1.7,
+  CREATURE_SPEED_HUNT: 4.6,
+  CREATURE_CONTACT: 1.05,
+  CREATURE_SIGHT: 20,
+  CREATURE_HEAR_RUN: 12,   // Hoerradius fuer rennende Schritte
+  JUMPSCARE_DURATION: 1.0,
 
-  CREATURE_SPEED_LURK: 1.5,
-  CREATURE_SPEED_HUNT: 3.55,
-  CREATURE_CONTACT: 0.95,   // Beruehrungsdistanz -> sofortiger Tod
-  CREATURE_SIGHT: 14.0,
-  JUMPSCARE_DURATION: 0.95,
+  // Auto (Finale)
+  CAR_ACCEL: 6.5,
+  CAR_MAX_SPEED: 13.0,
+  CAR_TURN: 1.7,
+  CRASH_SPEED: 4.0,        // ab dieser Geschwindigkeit ist ein Aufprall toedlich
 
-  // Treppe: Lauf von West (unten) nach Ost (oben), Zellen auf Reihe z=6
-  STAIR_RUN: [[24, 6], [25, 6], [26, 6]],
-  STAIR_BOTTOM: [23, 6],    // Einstieg unten (Erdgeschoss)
-  STAIR_TOP: [27, 6],       // Podest oben (Obergeschoss)
+  // Kunden in Akt 1
+  CUSTOMERS_NEEDED: 3,
 
-  GATE_CELLS: [[17, 29], [18, 29]],
-  PLAYER_START: { x: 17.5, z: 24.5, angle: -Math.PI / 2 }, // Blick nach Norden (zum Haus)
-  CREATURE_START: { x: 27.5, z: 14.5, floor: 0 },
+  PLAYER_START: { x: 47.5, z: 26.5, angle: -Math.PI / 2 },  // hinter dem Tresen
+  CREATURE_SPAWN: { x: 80.5, z: 50.5 },
 
-  // Gegenstaende: [x, z, etage]
-  KEY_SPAWNS: [[11, 7, 0], [26, 14, 0], [9, 14, 1]],
-  BATTERY_SPAWNS: [[8, 15, 0], [18, 6, 0], [27, 9, 0], [3, 26, 0], [32, 8, 0], [26, 13, 1], [9, 7, 1]],
+  // Strasse (Fahr- und Verkehrsachse)
+  ROAD_Z0: 6, ROAD_Z1: 9,
+  TUNNEL_X: 10,            // westlich davon ist die Roehre; Sieg bei x < 5 Zellen
+  WIN_X_CELL: 5,
 
-  // Laternen: [x, z, etage]
-  LANTERNS: [
-    [15, 19, 0], [20, 26, 0], [4, 27, 0], [31, 20, 0],       // Garten
-    [10, 14, 0], [9, 6, 0], [23, 14, 0], [17, 10, 0],        // Erdgeschoss innen
-    [18, 8, 1], [10, 15, 1], [25, 13, 1],                    // Obergeschoss
+  // Zapfsaeulen (Weltkoordinaten der Zellenmitte)
+  PUMPS: [[48, 15], [55, 15]],
+
+  // --- Story-Positionen (Zellen) ---
+  POS: {
+    counterFront: [47, 24],     // hier stehen Kunden
+    door: [50, 22],             // Eingangstuer
+    coffee: [43, 24],           // Kaffeemaschine
+    burger: [43, 27],           // Burgertheke
+    register: [46, 25],         // Kasse (am Tresen)
+    radio: [49, 26],            // Radio hinterm Tresen
+    carGarage: [64, 26],        // das kaputte Auto in der Garage
+    garageDoor: [64, 22],       // Rolltor (Mitte)
+    hut: [19, 47],              // Jagdhuette innen
+    hutDoor: [19, 44],
+    body: [19, 52],             // Leiche hinter der Huette (Autoschluessel)
+    wreck: [76, 46],            // Autowrack im Wald
+    policePark: [43, 12],       // Haltepunkt Polizeiauto
+    pumpFill: [48, 14],         // Kanister befuellen (vor Zapfsaeule 1)
+  },
+
+  // --- 5 Autoteile: [Name, Zelle, Etikett fuer HUD/Minimap-Suchkreis] ---
+  PARTS: [
+    { id: "battery", name: "Autobatterie", cell: [57, 28], area: "Lager der Tankstelle" },
+    { id: "plugs", name: "Zuendkerzen", cell: [18, 46], area: "Jagdhuette im Wald" },
+    { id: "wheel", name: "Ersatzrad", cell: [75, 45], area: "Autowrack im Osten" },
+    { id: "fuel", name: "Benzinkanister", cell: [66, 28], area: "Garage (an Saeule fuellen!)" },
+    { id: "carkey", name: "Autoschluessel", cell: [19, 52], area: "hinter der Jagdhuette" },
   ],
+
+  // --- Items ---
+  PISTOL_CELL: [46, 26],         // Schublade unterm Tresen
+  AMMO_CELL: [21, 48],           // Munitionsschachtel in der Huette
+  ENERGY_BAR_CELLS: [[53, 25], [44, 26], [57, 24], [17, 46]],
+  FLASH_BATTERY_CELLS: [[53, 28], [17, 49], [62, 24], [74, 46]],
+
+  // --- Verstecke ---
+  HIDE_SPOTS: [
+    { cell: [47, 27], name: "Unter dem Tresen" },
+    { cell: [59, 28], name: "Spind im Lager" },
+    { cell: [21, 45], name: "Ecke der Huette" },
+  ],
+
+  // Laternen/Lichtmasten [x, z] (aussen) — Vorplatz + Strasse
+  LAMPS: [[40, 12], [62, 12], [30, 8], [70, 8], [14, 8]],
 };
 
 // ---------------------------------------------------------------------------
-// Grundriss-Symbolik:
-//   F Zaun   G Tor      . Gras     p Weg      T Baum    B Busch
-//   H Hauswand aussen   W Innenwand           D Tuer
-//   : Innenboden        S Treppenzelle        ' ' Leere (nur Obergeschoss)
+// Kartenbau
 // ---------------------------------------------------------------------------
-
 function _mkGrid(fill) {
   var g = [];
   for (var z = 0; z < CFG.GRID_H; z++) g.push(new Array(CFG.GRID_W).fill(fill));
   return g;
 }
-function _hline(g, x0, x1, z, sym) { for (var x = x0; x <= x1; x++) g[z][x] = sym; }
-function _vline(g, x, z0, z1, sym) { for (var z = z0; z <= z1; z++) g[z][x] = sym; }
-function _rectBorder(g, x0, z0, x1, z1, sym) {
-  _hline(g, x0, x1, z0, sym); _hline(g, x0, x1, z1, sym);
-  _vline(g, x0, z0, z1, sym); _vline(g, x1, z0, z1, sym);
-}
-function _fill(g, x0, z0, x1, z1, sym) {
-  for (var z = z0; z <= z1; z++) for (var x = x0; x <= x1; x++) g[z][x] = sym;
+function _hline(g, x0, x1, z, s) { for (var x = x0; x <= x1; x++) g[z][x] = s; }
+function _vline(g, x, z0, z1, s) { for (var z = z0; z <= z1; z++) g[z][x] = s; }
+function _rect(g, x0, z0, x1, z1, s) { _hline(g, x0, x1, z0, s); _hline(g, x0, x1, z1, s); _vline(g, x0, z0, z1, s); _vline(g, x1, z0, z1, s); }
+function _fill(g, x0, z0, x1, z1, s) { for (var z = z0; z <= z1; z++) for (var x = x0; x <= x1; x++) g[z][x] = s; }
+
+// deterministischer Zufall fuer die Baumverteilung
+function _hash(x, z) {
+  var n = (x * 73856093) ^ (z * 19349663);
+  n = (n ^ (n >> 13)) * 1274126177;
+  return ((n ^ (n >> 16)) >>> 0) % 1000 / 1000;
 }
 
-// Haus-Footprint (beide Etagen identisch)
-var HOUSE = { x0: 6, z0: 4, x1: 29, z1: 17 };
+var SHOP = { x0: 42, z0: 22, x1: 60, z1: 30 };
+var GARAGE = { x0: 60, z0: 22, x1: 68, z1: 30 };
+var HUT = { x0: 16, z0: 44, x1: 22, z1: 50 };
 
-function buildFloor0() {
+function buildMap() {
   var g = _mkGrid(".");
-  // Zaun + Tor (Sueden)
-  _rectBorder(g, 0, 0, CFG.GRID_W - 1, CFG.GRID_H - 1, "F");
-  CFG.GATE_CELLS.forEach(function (c) { g[c[1]][c[0]] = "G"; });
-  // Weg vom Tor zur Haustuer
-  _vline(g, 17, 18, 28, "p");
-  _vline(g, 18, 18, 28, "p");
-  // Haus: Aussenwaende + Innenboden + Haustuer
-  _rectBorder(g, HOUSE.x0, HOUSE.z0, HOUSE.x1, HOUSE.z1, "H");
-  _fill(g, HOUSE.x0 + 1, HOUSE.z0 + 1, HOUSE.x1 - 1, HOUSE.z1 - 1, ":");
-  g[17][17] = "D";                              // Haustuer
-  // Innenwaende Erdgeschoss
-  _vline(g, 13, 5, 16, "W"); g[8][13] = "D"; g[14][13] = "D";
-  _vline(g, 21, 5, 16, "W"); g[8][21] = "D"; g[14][21] = "D";
-  _hline(g, 7, 12, 11, "W"); g[11][10] = "D";   // Kueche | Wohnzimmer
-  _hline(g, 22, 28, 11, "W"); g[11][25] = "D";  // Treppenraum | Esszimmer
-  // Treppenkorridor (Zellen z=6, Lauf nach Osten), seitlich zugemauert
-  _hline(g, 23, 27, 5, "W");
-  _hline(g, 23, 27, 7, "W");
-  CFG.STAIR_RUN.forEach(function (c) { g[c[1]][c[0]] = "S"; });
-  g[6][27] = "W";                               // Abstellraum unter dem Podest
-  // Garten: Baeume (blockierend) + BueSCHE (begehbar)
-  [[3, 3], [31, 4], [4, 22], [32, 24], [2, 14], [33, 15], [25, 21], [10, 21]]
-    .forEach(function (c) { g[c[1]][c[0]] = "T"; });
-  [[5, 5], [30, 7], [6, 18], [29, 26], [12, 26], [23, 26], [33, 27], [2, 9]]
-    .forEach(function (c) { g[c[1]][c[0]] = "B"; });
-  return g.map(function (row) { return row.join(""); });
+
+  // Kartenraender: Fels
+  _rect(g, 0, 0, CFG.GRID_W - 1, CFG.GRID_H - 1, "M");
+  _hline(g, 0, CFG.GRID_W - 1, 1, "M");
+  _vline(g, 1, 0, CFG.GRID_H - 1, "M");
+  _vline(g, CFG.GRID_W - 2, 0, CFG.GRID_H - 1, "M");
+  _hline(g, 0, CFG.GRID_W - 1, CFG.GRID_H - 2, "M");
+
+  // Strasse (west-ost)
+  _fill(g, 0, CFG.ROAD_Z0, CFG.GRID_W - 1, CFG.ROAD_Z1, "R");
+
+  // Tunnel: Felsmassiv im Westen, Roehre um die Strasse
+  _fill(g, 0, 0, CFG.TUNNEL_X, 16, "M");
+  _fill(g, 0, CFG.ROAD_Z0, CFG.TUNNEL_X, CFG.ROAD_Z1, "U");
+  // Strassenende im Osten: Fels
+  _fill(g, CFG.GRID_W - 3, CFG.ROAD_Z0 - 2, CFG.GRID_W - 1, CFG.ROAD_Z1 + 2, "M");
+
+  // Vorplatz
+  _fill(g, 38, 10, 68, 21, "r");
+
+  // Shop-Gebaeude
+  _rect(g, SHOP.x0, SHOP.z0, SHOP.x1, SHOP.z1, "H");
+  _fill(g, SHOP.x0 + 1, SHOP.z0 + 1, SHOP.x1 - 1, SHOP.z1 - 1, ":");
+  g[SHOP.z0][50] = "D";                                   // Eingangstuer (Norden)
+  [45, 46, 47, 53, 54, 55].forEach(function (x) { g[SHOP.z0][x] = "w"; }); // Fensterfront
+  _vline(g, 54, 23, 29, "W"); g[26][54] = "D";            // Lager im Osten
+  // Durchgang Shop -> Garage
+  g[26][SHOP.x1] = "D";
+
+  // Garage
+  _rect(g, GARAGE.x0, GARAGE.z0, GARAGE.x1, GARAGE.z1, "H");
+  _fill(g, GARAGE.x0 + 1, GARAGE.z0 + 1, GARAGE.x1 - 1, GARAGE.z1 - 1, "g");
+  g[26][SHOP.x1] = "D";                                   // (gemeinsame Wand)
+  [63, 64, 65].forEach(function (x) { g[GARAGE.z0][x] = "d"; }); // Rolltor
+
+  // Jagdhuette
+  _rect(g, HUT.x0, HUT.z0, HUT.x1, HUT.z1, "B");
+  _fill(g, HUT.x0 + 1, HUT.z0 + 1, HUT.x1 - 1, HUT.z1 - 1, "h");
+  g[HUT.z0][19] = "D";                                    // Tuer nach Norden
+
+  // Trampelpfade (Vorplatz -> Sueden -> Huette / Wrack)
+  _vline(g, 50, 31, 40, "p");
+  _hline(g, 20, 50, 40, "p");
+  _vline(g, 19, 41, 43, "p");
+  _hline(g, 50, 76, 40, "p");
+  _vline(g, 76, 41, 44, "p");
+
+  // Waldzonen: Baeume auf Gras, mit Lichtungen um Huette/Wrack/Leiche
+  var clearings = [[19, 47, 5.5], [76, 46, 4.5], [19, 52, 3.0], [50, 16, 3.0]];
+  for (var z = 2; z < CFG.GRID_H - 2; z++) {
+    for (var x = 2; x < CFG.GRID_W - 2; x++) {
+      if (g[z][x] !== ".") continue;
+      var densest = z > 32 || z < 5;                     // tiefer Wald
+      var density = densest ? 0.34 : 0.16;
+      // Abstand zu Strasse/Vorplatz halten
+      if (z >= CFG.ROAD_Z0 - 1 && z <= CFG.ROAD_Z1 + 1) continue;
+      var ok = true;
+      for (var c = 0; c < clearings.length; c++) {
+        if (Math.hypot(x - clearings[c][0], z - clearings[c][1]) < clearings[c][2]) { ok = false; break; }
+      }
+      if (!ok) continue;
+      if (_hash(x, z) < density) g[z][x] = "T";
+    }
+  }
+
+  return g.map(function (r) { return r.join(""); });
 }
 
-function buildFloor1() {
-  var g = _mkGrid(" ");
-  _rectBorder(g, HOUSE.x0, HOUSE.z0, HOUSE.x1, HOUSE.z1, "H");
-  _fill(g, HOUSE.x0 + 1, HOUSE.z0 + 1, HOUSE.x1 - 1, HOUSE.z1 - 1, ":");
-  // Treppenloch + Schachtwaende; Zugang nur vom Podest im Osten
-  _hline(g, 23, 26, 5, "W");
-  _hline(g, 23, 26, 7, "W");
-  g[6][23] = "W";                               // unteres Ende: zu (sonst Sturz)
-  CFG.STAIR_RUN.forEach(function (c) { g[c[1]][c[0]] = "S"; });
-  // Innenwaende Obergeschoss
-  _hline(g, 7, 28, 11, "W"); g[11][10] = "D"; g[11][24] = "D";
-  _vline(g, 13, 5, 10, "W"); g[7][13] = "D";
-  _vline(g, 17, 12, 16, "W"); g[14][17] = "D";
-  return g.map(function (row) { return row.join(""); });
-}
-
-var GRIDS = [buildFloor0(), buildFloor1()];
+var MAP = buildMap();
 
 // ---------------------------------------------------------------------------
-// Begehbarkeit / Kollision (etagenbewusst)
+// Begehbarkeit / Kollision
 // ---------------------------------------------------------------------------
-function symAt(floor, cx, cz) {
-  if (cx < 0 || cz < 0 || cx >= CFG.GRID_W || cz >= CFG.GRID_H) return "F";
-  return GRIDS[floor][cz].charAt(cx);
+function symAt(cx, cz) {
+  if (cx < 0 || cz < 0 || cx >= CFG.GRID_W || cz >= CFG.GRID_H) return "M";
+  return MAP[cz].charAt(cx);
 }
 
-// world = { doorOpen(floor,cx,cz) -> bool, gateUnlocked -> bool }
-function isBlocked(floor, cx, cz, world) {
-  var s = symAt(floor, cx, cz);
-  if (s === "." || s === "p" || s === ":" || s === "S" || s === "B") return false;
-  if (s === "D") return !(world && world.doorOpen(floor, cx, cz));
-  if (s === "G") return !(world && world.gateUnlocked);
-  return true; // F H W T ' ' und alles Unbekannte
-}
+var WALKABLE = { ".": 1, "p": 1, "R": 1, "U": 1, "r": 1, ":": 1, "g": 1, "h": 1 };
+var DRIVABLE = { "R": 1, "U": 1, "r": 1, "g": 1 };
 
-// Fuer Pfadsuche: Tueren gelten als passierbar (die Kreatur oeffnet sie)
-function isPathBlocked(floor, cx, cz, world) {
-  var s = symAt(floor, cx, cz);
-  if (s === "." || s === "p" || s === ":" || s === "S" || s === "B" || s === "D") return false;
-  if (s === "G") return !(world && world.gateUnlocked);
+// world = { doorOpen(cx,cz), rollDoorOpen }
+function isBlocked(cx, cz, world) {
+  var s = symAt(cx, cz);
+  if (WALKABLE[s]) return false;
+  if (s === "D") return !(world && world.doorOpen(cx, cz));
+  if (s === "d") return !(world && world.rollDoorOpen);
   return true;
 }
-
-function isStairCell(cx, cz) {
-  for (var i = 0; i < CFG.STAIR_RUN.length; i++) {
-    var c = CFG.STAIR_RUN[i];
-    if (c[0] === cx && c[1] === cz) return true;
-  }
+function isPathBlocked(cx, cz, world) {
+  var s = symAt(cx, cz);
+  if (WALKABLE[s] || s === "D") return false;
+  if (s === "d") return !(world && world.rollDoorOpen);
+  return true;
+}
+function isDrivable(cx, cz, world) {
+  var s = symAt(cx, cz);
+  if (DRIVABLE[s]) return true;
+  if (s === "d") return !!(world && world.rollDoorOpen);
   return false;
 }
-
-// Bodenhoehe an Weltposition (x,z) fuer eine Entitaet, die aktuell auf
-// Etage `floor` unterwegs ist. Auf der Treppe wird linear interpoliert.
-function groundHeight(x, z, floor) {
-  var cx = Math.floor(x / CFG.CELL), cz = Math.floor(z / CFG.CELL);
-  if (isStairCell(cx, cz)) {
-    var x0 = CFG.STAIR_RUN[0][0] * CFG.CELL;                       // unterer Rand
-    var x1 = (CFG.STAIR_RUN[CFG.STAIR_RUN.length - 1][0] + 1) * CFG.CELL; // oberer Rand
-    var t = Math.min(1, Math.max(0, (x - x0) / (x1 - x0)));
-    return t * CFG.FLOOR1_Y;
-  }
-  return floor === 1 ? CFG.FLOOR1_Y : 0;
+function isIndoor(cx, cz) {
+  var s = symAt(cx, cz);
+  return s === ":" || s === "g" || s === "h";
 }
 
-// Etage aus der Hoehe ableiten (Treppenmitte als Schwelle)
-function floorFromY(y) { return y > CFG.FLOOR1_Y * 0.5 ? 1 : 0; }
-
 // ---------------------------------------------------------------------------
-// A*-Pfadsuche auf einer Etage
+// A* (4er-Nachbarschaft)
 // ---------------------------------------------------------------------------
-function findPath(floor, start, goal, world) {
-  var W = CFG.GRID_W, key = function (c) { return c[0] + c[1] * W; };
-  var open = [{ c: start, g: 0, f: 0 }], came = {}, gscore = {};
-  gscore[key(start)] = 0;
-  var seen = {}; seen[key(start)] = true;
-  var iter = 0;
-  while (open.length && iter++ < 4000) {
+function findPath(start, goal, world) {
+  var W = CFG.GRID_W;
+  var key = function (c) { return c[0] + c[1] * W; };
+  var open = [{ c: start, g: 0, f: 0 }], came = {}, gs = {};
+  gs[key(start)] = 0;
+  var it = 0;
+  while (open.length && it++ < 9000) {
     var bi = 0;
     for (var i = 1; i < open.length; i++) if (open[i].f < open[bi].f) bi = i;
     var cur = open.splice(bi, 1)[0];
     if (cur.c[0] === goal[0] && cur.c[1] === goal[1]) {
       var path = [cur.c], k = key(cur.c);
       while (came[k] !== undefined) { path.push(came[k]); k = key(came[k]); }
-      path.reverse();
-      return path;
+      return path.reverse();
     }
-    var dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    var D = [[1, 0], [-1, 0], [0, 1], [0, -1]];
     for (var d = 0; d < 4; d++) {
-      var nx = cur.c[0] + dirs[d][0], nz = cur.c[1] + dirs[d][1];
-      if (isPathBlocked(floor, nx, nz, world)) continue;
+      var nx = cur.c[0] + D[d][0], nz = cur.c[1] + D[d][1];
+      if (isPathBlocked(nx, nz, world)) continue;
       var nk = nx + nz * W, ng = cur.g + 1;
-      if (gscore[nk] !== undefined && ng >= gscore[nk]) continue;
-      gscore[nk] = ng; came[nk] = cur.c;
-      var h = Math.abs(nx - goal[0]) + Math.abs(nz - goal[1]);
-      if (!seen[nk]) { open.push({ c: [nx, nz], g: ng, f: ng + h }); seen[nk] = true; }
-      else { for (var j = 0; j < open.length; j++) if (open[j].c[0] === nx && open[j].c[1] === nz) { open[j].g = ng; open[j].f = ng + h; } }
+      if (gs[nk] !== undefined && ng >= gs[nk]) continue;
+      gs[nk] = ng; came[nk] = cur.c;
+      open.push({ c: [nx, nz], g: ng, f: ng + Math.abs(nx - goal[0]) + Math.abs(nz - goal[1]) });
     }
   }
   return null;
 }
 
-// Sichtlinie auf einer Etage (DDA ueber das Raster; geschlossene Tueren blocken)
-function lineOfSight(floor, x0, z0, x1, z1, world) {
+// Sichtlinie (Fenster blocken Bewegung, aber NICHT die Sicht)
+function lineOfSight(x0, z0, x1, z1, world) {
   var dx = x1 - x0, dz = z1 - z0;
   var dist = Math.hypot(dx, dz);
   if (dist < 0.001) return true;
-  var steps = Math.ceil(dist / (CFG.CELL * 0.33));
+  var steps = Math.ceil(dist / (CFG.CELL * 0.4));
   for (var i = 1; i < steps; i++) {
     var t = i / steps;
-    var cx = Math.floor((x0 + dx * t) / CFG.CELL);
-    var cz = Math.floor((z0 + dz * t) / CFG.CELL);
-    var s = symAt(floor, cx, cz);
-    if (s === "F" || s === "H" || s === "W" || s === "T") return false;
-    if (s === "D" && !(world && world.doorOpen(floor, cx, cz))) return false;
+    var s = symAt(Math.floor((x0 + dx * t) / CFG.CELL), Math.floor((z0 + dz * t) / CFG.CELL));
+    if (s === "M" || s === "H" || s === "W" || s === "B" || s === "T") return false;
+    if (s === "D" && !(world && world.doorOpen(Math.floor((x0 + dx * t) / CFG.CELL), Math.floor((z0 + dz * t) / CFG.CELL)))) return false;
+    if (s === "d" && !(world && world.rollDoorOpen)) return false;
   }
   return true;
 }
 
-// Node-Export fuer Karten-Validierung
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
-    CFG: CFG, GRIDS: GRIDS, symAt: symAt, isBlocked: isBlocked,
-    isPathBlocked: isPathBlocked, groundHeight: groundHeight,
-    findPath: findPath, lineOfSight: lineOfSight, isStairCell: isStairCell,
-    floorFromY: floorFromY, HOUSE: HOUSE,
+    CFG: CFG, MAP: MAP, symAt: symAt, isBlocked: isBlocked,
+    isPathBlocked: isPathBlocked, isDrivable: isDrivable, isIndoor: isIndoor,
+    findPath: findPath, lineOfSight: lineOfSight,
+    SHOP: SHOP, GARAGE: GARAGE, HUT: HUT,
   };
 }

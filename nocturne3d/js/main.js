@@ -101,9 +101,22 @@
   function startGame() {
     location.reload();               // sauberer Neustart der ganzen Nacht
   }
+
+  // Maus-Sperre robust anfordern (funktioniert je nach Browser bei file://
+  // nicht immer sofort — daher Best-Effort, ohne dass das Spiel haengt).
+  var lastLockRequest = 0;
+  function requestLock() {
+    lastLockRequest = performance.now();
+    if (DEBUG || !document.body.requestPointerLock) return;
+    try {
+      var p = document.body.requestPointerLock();
+      if (p && p.catch) p.catch(function () { });
+    } catch (e) { /* Browser verweigert Pointer Lock bei file:// – egal */ }
+  }
+
   function firstStart() {
     setState(STATE.PLAYING);
-    if (!DEBUG && document.body.requestPointerLock) document.body.requestPointerLock();
+    requestLock();
     audio.startAmbience();
     audio.setRadio("music");
     ui.title("NACHT 1", "23:47 — Nachtschicht an der Tankstelle");
@@ -115,7 +128,11 @@
   document.addEventListener("keydown", function (e) {
     input.keys[e.code] = true;
     if (state !== STATE.PLAYING) {
-      if (e.code === "Enter") {
+      if (state === STATE.PAUSED) {
+        // Aus der Pause jederzeit per Taste zurueck ins Spiel
+        setState(STATE.PLAYING);
+        requestLock();
+      } else if (e.code === "Enter") {
         if (state === STATE.MENU) firstStart();
         else if (state === STATE.DEAD || state === STATE.WIN) startGame();
       }
@@ -144,15 +161,24 @@
   document.body.addEventListener("mousedown", function (e) {
     if (state === STATE.MENU) { firstStart(); return; }
     if (state === STATE.DEAD || state === STATE.WIN) { startGame(); return; }
-    if (state === STATE.PAUSED || (state === STATE.PLAYING && !document.pointerLockElement && !DEBUG)) {
-      document.body.requestPointerLock();
+    if (state === STATE.PAUSED) {
+      setState(STATE.PLAYING);           // sofort weiterspielen, nicht auf Lock warten
+      requestLock();
+      return;
+    }
+    if (state === STATE.PLAYING && !document.pointerLockElement && !DEBUG) {
+      requestLock();
       return;
     }
     if (state === STATE.PLAYING && e.button === 0) shoot();
   });
   document.addEventListener("pointerlockchange", function () {
-    if (!document.pointerLockElement && state === STATE.PLAYING && !DEBUG) setState(STATE.PAUSED);
-    else if (document.pointerLockElement && state === STATE.PAUSED) setState(STATE.PLAYING);
+    if (document.pointerLockElement) {
+      if (state === STATE.PAUSED) setState(STATE.PLAYING);
+    } else if (state === STATE.PLAYING && !DEBUG) {
+      // Nur pausieren, wenn der Lock nicht direkt wieder abprallt (file://-Browser)
+      if (performance.now() - lastLockRequest > 500) setState(STATE.PAUSED);
+    }
   });
 
   // --- Pistole -----------------------------------------------------------------------
